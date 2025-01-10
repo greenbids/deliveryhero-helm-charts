@@ -1,0 +1,25 @@
+apiVersion: v1
+name: locust-gitsync
+version: "0.1.0"
+appVersion: 2.32.2
+home: https://github.com/locustio/locust
+icon: https://locust.io/static/img/logo.png
+maintainers:
+  - name: max-rocket-internet
+    email: no-reply@deliveryhero.com
+  - name: AlexisBRENON
+    email: alexis@greenbids.ai
+description: |
+  A chart to install Locust, a scalable load testing tool written in Python.
+
+  ## Locustfiles
+
+  Locust require locustfiles to execute load testing.
+  To fetch these files in the pods we use git-sync to continously track a git repository containing the files.
+  Configure the gitSync process to fetch the right repository and the right files:
+
+  ```yaml
+  locustfiles:
+    gitSync:
+      repo: https://github.com/username/reponame.git
+  ```

@@ -1,0 +1,203 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "locust.fullname" . }}-worker
+  labels:
+    component: worker
+{{ include "locust.labels" . | indent 4 }}
+{{- with .Values.worker.deploymentAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+spec:
+  selector:
+    matchLabels:
+      component: worker
+      {{- include "locust.selectorLabels" . | nindent 6 }}
+{{- if not .Values.worker.hpa.enabled }}
+  replicas: {{ .Values.worker.replicas }}
+{{- end }}
+{{- with .Values.worker.strategy }}
+  strategy:
+{{ toYaml . | trim | indent 4 }}
+{{- end }}
+  template:
+    metadata:
+      annotations:
+      {{- with .Values.worker.annotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+        checksum/config-locust-lib: {{ include (print $.Template.BasePath "/configmap-locust-lib.yaml") . | sha256sum }}
+        checksum/config-locust-locustfile: {{ include (print $.Template.BasePath "/configmap-locust-locustfile.yaml") . | sha256sum }}
+        checksum/config-config: {{ include (print $.Template.BasePath "/configmap-config.yaml") . | sha256sum }}
+        checksum/config-secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+      labels:
+        component: worker
+        {{- include "locust.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      serviceAccountName: {{ template "locust.fullname" . }}-worker
+{{- if .Values.hostAliases }}
+      hostAliases: {{- .Values.hostAliases | toYaml | nindent 8 }}
+{{- end }}
+      initContainers:
+        {{- if .Values.locustfiles.gitSync.enabled }}
+          {{- include "git_sync_container" (dict "Values" .Values "is_init" "true" "Template" .Template) | nindent 8 }}
+        {{- end }}
+      containers:
+      {{- if .Values.locustfiles.gitSync.enabled }}
+        {{- include "git_sync_container" . | nindent 6 }}
+      {{- end }}
+      - name: {{ .Chart.Name }}
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: {{ template "locust.worker_image" . }}
+{{- with .Values.worker.command }}
+        command:
+        {{- toYaml . | nindent 8 }}
+{{- end }}
+        args:
+          - --worker
+{{- if .Values.worker.args }}
+          {{- toYaml .Values.worker.args | nindent 10 }}
+{{- end }}
+        imagePullPolicy: {{ template "locust.worker_pull_policy" . }}
+        resources:
+{{ toYaml .Values.worker.resources | indent 10 }}
+        volumeMounts:
+          {{- if .Values.loadtest.enabled }}
+            {{- if .Values.loadtest.locust_locustfile_configmap}}
+          - name: locustfile
+            mountPath: "{{ .Values.loadtest.locust_locustfile_path }}"
+            {{- end }}
+            {{- if .Values.loadtest.locust_lib_configmap }}
+          - name: lib
+            mountPath: "{{ .Values.loadtest.locust_locustfile_path }}/lib"
+            {{- end }}
+          {{- end }}
+          {{- if .Values.locustfiles.gitSync.enabled }}
+            {{- include "locust.locustfiles_mount" . | nindent 10 }}
+          {{- end }}
+          - name: config
+            mountPath: /config
+{{- if .Values.extraConfigMaps }}
+{{- range $key, $value := .Values.extraConfigMaps }}
+          - name: {{ $key }}
+            mountPath: {{ $value }}
+{{- end }}
+{{- end}}
+{{- if .Values.loadtest.mount_external_secret }}
+{{- include "locust.external_secret.volumemount" . | nindent 10 }}
+{{- end}}
+{{- if or .Values.worker.envs_include_default .Values.loadtest.environment .Values.worker.environment .Values.loadtest.environment_secret .Values.loadtest.environment_external_secret }}
+        env:
+{{- if .Values.worker.envs_include_default }}
+          - name: LOCUST_HOST
+            value: "{{ .Values.loadtest.locust_host }}"
+          - name: LOCUST_MASTER_NODE_HOST
+            value: "{{ template "locust.fullname" . }}"
+          - name: LOCUST_MASTER_NODE_PORT
+            value: "5557"
+          - name: LOCUST_LOGLEVEL
+            value: "{{ .Values.worker.logLevel }}"
+          - name: LOCUST_LOCUSTFILE
+            {{- if .Values.loadtest.enabled }}
+            value: "{{ .Values.loadtest.locust_locustfile_path }}/{{ .Values.loadtest.locust_locustfile }}"
+            {{- else if .Values.locustfiles.gitSync.enabled }}
+            value: "{{ .Values.locustfiles.mountPath }}/repo/{{ .Values.locustfiles.gitSync.subPath }}/"
+            {{- end }}
+{{- end }}
+{{- range $key, $value := .Values.worker.environment }}
+          - name: {{ $key }}
+            value: {{ $value | quote }}
+{{- end }}
+{{- range $key, $value := .Values.loadtest.environment }}
+          - name: {{ $key }}
+            value: {{ $value | quote }}
+{{- end }}
+{{- range $key, $value := .Values.loadtest.environment_secret }}
+          - name: {{ $key }}
+            valueFrom:
+              secretKeyRef:
+                name: {{ template "locust.fullname" $ }}
+                key: {{ $key }}
+{{- end }}
+{{- range $key, $values := .Values.loadtest.environment_external_secret }}
+{{- range $value := $values }}
+          - name: {{ $value }}
+            valueFrom:
+              secretKeyRef:
+                name: {{ $key }}
+                key: {{ $value }}
+{{- end }}
+{{- end }}
+{{- end }}
+      restartPolicy: {{ .Values.worker.restartPolicy }}
+      volumes:
+        {{- if .Values.loadtest.enabled }}
+          {{- if .Values.loadtest.locust_lib_configmap }}
+        - name: lib
+          configMap:
+            name: {{ .Values.loadtest.locust_lib_configmap }}
+          {{- end }}
+          {{- if .Values.loadtest.locust_locustfile_configmap }}
+        - name: locustfile
+          configMap:
+            name: {{ .Values.loadtest.locust_locustfile_configmap }}
+          {{- end }}
+        {{- end }}
+        {{- if .Values.locustfiles.gitSync.enabled }}
+        - name: locustfiles
+          emptyDir: {}
+        {{- end }}
+        - name: config
+          configMap:
+            name: {{ template "locust.fullname" . }}-config
+{{- if .Values.extraConfigMaps }}
+{{- range $key, $value := .Values.extraConfigMaps }}
+        - name: {{ $key }}
+          configMap:
+            name: {{ $key }}
+{{- end }}
+{{- end }}
+{{- if .Values.loadtest.mount_external_secret }}
+{{- include "locust.external_secret.volume" . | nindent 8 }}
+{{- end }}
+{{- if .Values.worker.nodeSelector }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ else if .Values.nodeSelector }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ end }}
+{{- if .Values.worker.affinity }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ else if .Values.affinity }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ end }}
+{{- if .Values.worker.tolerations }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ else if .Values.tolerations }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ end }}

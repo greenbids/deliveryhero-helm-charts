@@ -1,0 +1,264 @@
+locustfiles:
+  # locustfiles.mountPath -- the path of the locustfiles in the containers (without trailing backslash)
+  mountPath: "/mnt/locust"
+  # locustfiles.requirements -- Path to a file (in the container) containing requirements to install
+  requirements: ~
+  gitSync:
+    # locustfiles.gitSync.enabled -- Enable the Git Sync feature
+    enabled: true
+    # locustfiles.gitSync.containerName -- Name of the container in the pod
+    containerName: git-sync
+    # locustfiles.gitSync.repo -- Git repository containing locustfiles to synchronize
+    repo: ~
+    # locustfiles.gitSync.ref -- Git reference to pull
+    ref: main
+    # locustfiles.gitSync.subPath -- subpath within the repo where locustfiles are located,
+    # should be "" if files are at repo root
+    subPath: "locustfiles"
+    # locustfiles.gitSync.period - interval between git sync attempts in seconds
+    # Go-style duration string (e.g. "100ms" or "0.1s" = 100ms).
+    period: 5s
+    # locustfiles.gitSync.envFrom -- add variables from secret into gitSync containers, such proxy-config
+    # envFrom: |
+    #   - secretRef:
+    #       name: 'proxy-config'
+    envFrom: ~
+    # locustfiles.gitSync.extraVolumeMounts: Mount additional volumes into git-sync.
+    # It can be templated like in the following example:
+    #   extraVolumeMounts:
+    #     - name: my-templated-extra-volume
+    #       mountPath: "{{ .Values.my_custom_path }}"
+    #       readOnly: true
+    extraVolumeMounts: []
+    # locustfiles.gitSync.env: Environment variables for the git-sync container.
+    # Supported env vars for gitsync can be found at https://github.com/kubernetes/git-sync
+    env: []
+    # locustfiles.gitSync.resources -- resources for the git-sync container
+    resources: {}
+
+images:
+  # images.defaultLocustRepository -- default image used by locust containers (master and workers)
+  defaultLocustRepository: locustio/locust
+  # images.defaultLocustTag -- default tag used by locust containers (master and workers)
+  defaultLocustTag: 2.32.2
+
+  master:
+    # images.master.repository -- image used by locust master container (see images.defaultLocustRepository)
+    repository: ~
+    # images.master.tag -- tag used by locust master container (see images.defaultLocustTag)
+    tag: ~
+    pullPolicy: IfNotPresent
+
+  worker:
+    # images.worker.repository -- image used by locust worker containers (see images.defaultLocustRepository)
+    repository: ~
+    # images.worker.tag -- tag used by locust worker containers (see images.defaultLocustTag)
+    tag: ~
+    pullPolicy: IfNotPresent
+
+  gitSync:
+    # images.gitSync.repository -- image used by gitSync container
+    repository: registry.k8s.io/git-sync/git-sync
+    # images.gitSync.tag -- tag used by gitSync container
+    tag: v4.1.0
+    pullPolicy: IfNotPresent
+
+
+service:
+  type: ClusterIP
+  annotations: {}
+  extraLabels: {}
+  loadBalancerIP: ""
+  port: 8089
+  targetPort: 8089
+  # nodePort: 8089
+
+master:
+  # master.logLevel -- Log level. Can be INFO or DEBUG
+  logLevel: INFO
+  # master.replicas -- Should be set to either 0 or 1.
+  replicas: 1
+  # master.resources -- resources for the locust master
+  resources: {}
+    # limits:
+    #   cpu: 2000m
+    #   memory: 1024Mi
+    # requests:
+    #   cpu: 1000m
+    #   memory: 1024Mi
+  serviceAccountAnnotations: {}
+  # master.deploymentAnnotations -- Annotations on the deployment for master
+  deploymentAnnotations: {}
+  # master.envs_include_default -- Whether to include default environment variables
+  envs_include_default: true
+  # master.environment -- environment variables for the master
+  environment: {}
+  # master.args -- Any extra command args for the master
+  args: []
+  command:
+    - sh
+    - /config/docker-entrypoint.sh
+  strategy:
+    type: RollingUpdate
+  # master.pdb.enabled -- Whether to create a PodDisruptionBudget for the master pod
+  pdb:
+    enabled: false
+  # master.auth.enabled -- When enabled using image tag 2.21.0 or later you do
+  # not need username or pass word. Older image tags you are required to
+  auth:
+    enabled: false
+    username: ""
+    password: ""
+
+  # extraPorts is a list of extra ports. Specified as a YAML list.
+  # This is useful if you need to add additional ports for monitoring.
+  extraPorts: null
+    # - containerPort: 8080
+    #   name: http-monitoring
+
+  # Used to define readinessProbe for the pod
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 30
+    timeoutSeconds: 30
+    failureThreshold: 2
+    successThreshold: 1
+    httpGet:
+      path: /
+      port: 8089
+      scheme: HTTP
+
+  # Used to define livenessProbe for the pod
+  livenessProbe: {}
+    # initialDelaySeconds: 60
+    # periodSeconds: 30
+    # timeoutSeconds: 30
+    # failureThreshold: 2
+    # successThreshold: 1
+    # httpGet:
+    #   path: /
+    #   port: 8089
+    #   scheme: HTTP
+
+  # Used to define startupProbe for the pod
+  startupProbe: {}
+    # initialDelaySeconds: 60
+    # periodSeconds: 30
+    # timeoutSeconds: 30
+    # failureThreshold: 2
+    # successThreshold: 1
+    # httpGet:
+    #   path: /
+    #   port: 8089
+    #   scheme: HTTP
+
+  # master.restartPolicy -- master pod's restartPolicy. Can be Always, OnFailure, or Never.
+  restartPolicy: Always
+  # master.nodeSelector -- Overwrites nodeSelector from global
+  nodeSelector: {}
+  # master.tolerations -- Overwrites tolerations from global
+  tolerations: []
+  # master.affinity -- Overwrites affinity from global
+  affinity: {}
+
+worker:
+  # worker.logLevel -- Log level. Can be INFO or DEBUG
+  logLevel: INFO
+  replicas: 1
+  # worker.pdb.enabled -- Whether to create a PodDisruptionBudget for the worker pods
+  pdb:
+    enabled: false
+  hpa:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 100
+    targetCPUUtilizationPercentage: 40
+  keda:
+    enabled: false
+    pollingInterval: 15
+    cooldownPeriod: 30
+    # worker.keda,triggers - Allow passing required triggers to scale upon as string template for complex triggering
+    triggers: |
+      # https://keda.sh/docs/latest/scalers/metrics-api/
+      - type: metrics-api
+        metadata:
+          activationTargetValue: "0"
+          targetValue: "50"   # Scale pods based on target users
+          url: "http://{{ template "locust.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ $.Values.service.port }}/stats/requests"
+          format: json
+          valueLocation: 'user_count'
+  # worker.resources -- resources for the locust worker
+  resources: {}
+    # limits:
+    #   cpu: 500m
+    #   memory: 256Mi
+    # requests:
+    #   cpu: 500m
+    #   memory: 256Mi
+  serviceAccountAnnotations: {}
+  # worker.deploymentAnnotations -- Annotations on the deployment for workers
+  deploymentAnnotations: {}
+  # worker.envs_include_default -- Whether to include default environment variables
+  envs_include_default: true
+  # worker.environment -- environment variables for the workers
+  environment: {}
+  # worker.args -- Any extra command args for the workers
+  args: []
+  command:
+    - sh
+    - /config/docker-entrypoint.sh
+  strategy:
+    type: RollingUpdate
+  # worker.restartPolicy -- worker pod's restartPolicy. Can be Always, OnFailure, or Never.
+  restartPolicy: Always
+  # worker.nodeSelector -- Overwrites nodeSelector from global
+  nodeSelector: {}
+  # worker.tolerations -- Overwrites tolerations from global
+  tolerations: []
+  # worker.affinity -- Overwrites affinity from global
+  affinity: {}
+
+
+nameOverride: ""
+fullnameOverride: ""
+imagePullSecrets: []
+
+# hostAliases -- List of entries added to the /etc/hosts file on the pod to resolve custom hosts
+hostAliases: []
+  # - ip: "10.0.0.1"
+  #   hostnames:
+  #   - "example-host.com"
+
+podSecurityContext: {}
+  # fsGroup: 2000
+
+securityContext: {}
+  # capabilities:
+  #   drop:
+  #   - ALL
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  #  kubernetes.io/ingress.class: nginx
+  #  kubernetes.io/tls-acme: "true"
+  hosts:
+    - host: chart-example.local
+      pathType: ImplementationSpecific
+      path: /
+  tls: []
+  #  - secretName: chart-example-tls
+  #    hosts:
+  #      - chart-example.local
+
+# extraConfigMaps -- Any extra configmaps to mount for the master and worker
+extraConfigMaps: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+# extraLabels -- Any extra labels to apply to all resources
+extraLabels: {}
